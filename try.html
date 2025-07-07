@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>WARZONE TANK</title>
+<style>
+  body {
+    margin:0; background:#111; font-family: Arial, sans-serif; color:#eee;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100vh; user-select:none;
+  }
+  h1 {
+    margin-top: 20px;
+    font-size: 3em;
+    text-align: center;
+    text-shadow: 0 0 10px #0ff, 0 0 20px #0ff;
+  }
+  #game {
+    background:#222;
+    border:3px solid #0ff;
+    display:none;
+    margin-top: 10px;
+    image-rendering: pixelated;
+  }
+  #ui, #game-over-ui {
+    margin-top:10px;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+  select, button {
+    padding:10px 20px;
+    font-size: 1.2em;
+    border:none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: linear-gradient(45deg, #00ffff, #0066ff);
+    color:#fff;
+    box-shadow: 0 0 10px #00ffff;
+    transition: transform 0.3s ease;
+  }
+  button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 20px #00ffff, 0 0 30px #00ffff;
+  }
+  #start-btn {
+    font-size: 2em;
+    padding: 15px 40px;
+    margin-top: 15px;
+    font-weight: bold;
+    border-radius: 12px;
+    background: linear-gradient(45deg, #00ffff, #00ccff);
+    box-shadow: 0 0 25px #00ffff, 0 0 35px #00ffff;
+    animation: pulse 2s infinite alternate;
+  }
+  #message {
+    margin-top: 10px;
+    font-size: 1.5em;
+    min-height: 1.5em;
+    color: #0f0;
+    text-align: center;
+  }
+  #game-over-ui {
+    display:none;
+    flex-direction: column;
+    text-align: center;
+  }
+  #game-over-ui button {
+    margin-top: 10px;
+  }
+  .health-bar {
+    position: absolute;
+    width: 40px;
+    height: 6px;
+    background: #444;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: -50px;
+  }
+  .health-bar-inner {
+    height: 100%;
+    background: #0f0;
+    width: 100%;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 15px #00ffff, 0 0 25px #00ffff; transform: scale(1);}
+    100% { box-shadow: 0 0 35px #00ffff, 0 0 50px #00ffff; transform: scale(1.1);}
+  }
+</style>
+</head>
+<body>
+
+<h1>⚔️ WARZONE TANK ⚔️</h1>
+
+<div id="ui">
+  <label for="difficulty">Bot Zorluğu:</label>
+  <select id="difficulty">
+    <option value="easy">Kolay</option>
+    <option value="medium" selected>Orta</option>
+    <option value="hard">Zor</option>
+  </select>
+
+  <label for="tank-model">Tank Modeli:</label>
+  <select id="tank-model">
+    <option value="1">Model 1 (1 Mermi)</option>
+    <option value="2">Model 2 (2 Mermi)</option>
+    <option value="3">Model 3 (3 Mermi)</option>
+  </select>
+</div>
+
+<button id="start-btn">Başla</button>
+
+<canvas id="game" width="1000" height="700"></canvas>
+
+<div id="game-over-ui">
+  <div id="game-over-msg" style="font-size:1.8em; margin-bottom:10px; color:#f44;"></div>
+  <button id="restart-btn">Yeniden Başla</button>
+  <button id="menu-btn">Menüye Dön</button>
+</div>
+
+<div id="message"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const message = document.getElementById('message');
+  const startBtn = document.getElementById('start-btn');
+  const difficultySelect = document.getElementById('difficulty');
+  const tankModelSelect = document.getElementById('tank-model');
+  const ui = document.getElementById('ui');
+  const gameOverUI = document.getElementById('game-over-ui');
+  const gameOverMsg = document.getElementById('game-over-msg');
+  const restartBtn = document.getElementById('restart-btn');
+  const menuBtn = document.getElementById('menu-btn');
+
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+
+  const TANK_SIZE = 40;
+  const BULLET_SIZE = 8;
+  const MAX_BOUNCES = 3;
+  const OBSTACLE_COUNT = 15; // Daha az engel için 15 yaptım
+  const MIN_OBSTACLE_DISTANCE = 50; // Engeller arası minimum mesafe
+  const MAX_HEALTH = 5;
+
+  const PLAYER_COLOR = '#00ccff';
+  const AI_COLORS = ['#cc2222', '#ffaa00', '#00aa00', '#aa00ff'];
+
+  let keys = {};
+  let tanks = [];
+  let bullets = [];
+  let obstacles = [];
+  let healthCubes = [];
+
+  let gameRunning = false;
+  let playerTank = null;
+  let difficulty = 'medium';
+  let playerTankModel = 1;
+  let ais = [];
+
+  class Tank {
+    constructor(x, y, color, isPlayer = false, model = 1) {
+      this.x = x;
+      this.y = y;
+      this.width = TANK_SIZE;
+      this.height = TANK_SIZE * 0.75;
+      this.color = color;
+      this.isPlayer = isPlayer;
+      this.speed = 1.9;
+      this.dir = 0;
+      this.reloadTime = 0;
+      this.dead = false;
+      this.health = MAX_HEALTH;
+      this.model = model;
+      this.explodingParts = [];
+    }
+
+    draw() {
+      if(this.dead){
+        this.drawExplosion();
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.dir * Math.PI / 2);
+
+      switch(this.model){
+        case 1:
+          ctx.fillStyle = this.color;
+          ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+          ctx.fillStyle = '#333';
+          ctx.fillRect(0, -6, this.width/2, 12);
+          break;
+        case 2:
+          ctx.fillStyle = this.color;
+          ctx.fillRect(-this.width/2, -this.height/2, this.width * 1.2, this.height);
+          ctx.fillStyle = '#222';
+          ctx.fillRect(0, -10, this.width/3, 20);
+          break;
+        case 3:
+          ctx.fillStyle = this.color;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, this.width/2, this.height/2, 0, 0, Math.PI*2);
+          ctx.fill();
+          ctx.fillStyle = '#222';
+          ctx.fillRect(this.width/4, -12, this.width/12, 6);
+          ctx.fillRect(this.width/4, -2, this.width/12, 6);
+          ctx.fillRect(this.width/4, 8, this.width/12, 6);
+          break;
+      }
+      ctx.restore();
+
+      // Can barı
+      const barWidth = 40;
+      const barHeight = 6;
+      const barX = this.x - barWidth/2;
+      const barY = this.y - this.height/2 - 15;
+      ctx.fillStyle = '#444';
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(barX, barY, (this.health/MAX_HEALTH)*barWidth, barHeight);
+      ctx.strokeStyle = '#000';
+      ctx.strokeRect(barX, barY, barWidth, barHeight);
+    }
+
+    drawExplosion(){
+      for(let p of this.explodingParts){
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.fillStyle = this.color;
+        ctx.globalAlpha = p.alpha;
+        ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+
+    update() {
+      if(this.dead){
+        this.updateExplosion();
+        return;
+      }
+      if(this.reloadTime > 0) this.reloadTime--;
+
+      if(this.isPlayer){
+        if(keys['a']) { this.x -= this.speed; this.dir = 2;}
+        if(keys['d']) { this.x += this.speed; this.dir = 0;}
+        if(keys['w']) { this.y -= this.speed; this.dir = 3;}
+        if(keys['s']) { this.y += this.speed; this.dir = 1;}
+        this.handleCollision();
+        this.constrain();
+      }
+    }
+
+    updateExplosion(){
+      for(let p of this.explodingParts){
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= 0.03;
+      }
+      this.explodingParts = this.explodingParts.filter(p => p.alpha > 0);
+    }
+
+    constrain(){
+      this.x = Math.min(Math.max(this.x, this.width/2), WIDTH - this.width/2);
+      this.y = Math.min(Math.max(this.y, this.height/2), HEIGHT - this.height/2);
+    }
+
+    handleCollision(){
+      for(let obs of obstacles){
+        if(rectsOverlap(this.x - this.width/2, this.y - this.height/2, this.width, this.height,
+          obs.x, obs.y, obs.width, obs.height)){
+          if(keys['a']) this.x += this.speed;
+          if(keys['d']) this.x -= this.speed;
+          if(keys['w']) this.y += this.speed;
+          if(keys['s']) this.y -= this.speed;
+        }
+      }
+    }
+
+    shoot(){
+      if(this.reloadTime === 0 && !this.dead){
+        const offset = this.width/2 + BULLET_SIZE/2;
+        let bulletsToFire = [];
+
+        switch(this.model){
+          case 1:
+            bulletsToFire.push({dx:0, dy:0});
+            break;
+          case 2:
+            bulletsToFire.push({dx:0, dy:-5});
+            bulletsToFire.push({dx:0, dy:5});
+            break;
+          case 3:
+            bulletsToFire.push({dx:0, dy:0});
+            bulletsToFire.push({dx:0, dy:-7});
+            bulletsToFire.push({dx:0, dy:7});
+            break;
+        }
+
+        for(let b of bulletsToFire){
+          let bx = this.x;
+          let by = this.y;
+          switch(this.dir){
+            case 0: bx += offset; by += b.dy; break;
+            case 1: by += offset; bx += b.dy; break;
+            case 2: bx -= offset; by += b.dy; break;
+            case 3: by -= offset; bx += b.dy; break;
+          }
+          bullets.push(new Bullet(bx, by, this.dir, this.color));
+        }
+
+        this.reloadTime = 20;
+      }
+    }
+
+    takeDamage(){
+      this.health--;
+      if(this.health <= 0 && !this.dead){
+        this.dead = true;
+        this.explode();
+      }
+    }
+
+    explode(){
+      this.explodingParts = [];
+      const partCount = 10;
+      for(let i=0; i < partCount; i++){
+        this.explodingParts.push({
+          x: this.x,
+          y: this.y,
+          size: 8 + Math.random()*8,
+          vx: (Math.random()-0.5)*5,
+          vy: (Math.random()-0.5)*5,
+          alpha: 1
+        });
+      }
+    }
+  }
+
+  class Bullet {
+    constructor(x, y, dir, color) {
+      this.x = x;
+      this.y = y;
+      this.dir = dir;
+      this.color = color;
+      this.speed = 7;
+      this.size = BULLET_SIZE;
+      this.dead = false;
+      this.bounces = 0;
+    }
+
+    update() {
+      if(this.dead) return;
+
+      switch(this.dir){
+        case 0: this.x += this.speed; break;
+        case 1: this.y += this.speed; break;
+        case 2: this.x -= this.speed; break;
+        case 3: this.y -= this.speed; break;
+      }
+      this.checkBounce();
+      this.checkObstacleCollision();
+      this.checkTankCollision();
+    }
+
+    draw() {
+      if(this.dead) return;
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size/2, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    checkBounce(){
+      let bounced = false;
+      if(this.x < this.size/2){
+        this.x = this.size/2;
+        this.dir = 0;
+        bounced = true;
+      }
+      else if(this.x > WIDTH - this.size/2){
+        this.x = WIDTH - this.size/2;
+        this.dir = 2;
+        bounced = true;
+      }
+      if(this.y < this.size/2){
+        this.y = this.size/2;
+        this.dir = 1;
+        bounced = true;
+      }
+      else if(this.y > HEIGHT - this.size/2){
+        this.y = HEIGHT - this.size/2;
+        this.dir = 3;
+        bounced = true;
+      }
+      if(bounced){
+        this.bounces++;
+        if(this.bounces > MAX_BOUNCES) this.dead = true;
+      }
+    }
+
+    checkObstacleCollision(){
+      for(let obs of obstacles){
+        if(rectsOverlap(this.x-this.size/2, this.y-this.size/2, this.size, this.size,
+          obs.x, obs.y, obs.width, obs.height)){
+          this.bounces++;
+          if(this.bounces > MAX_BOUNCES){
+            this.dead = true;
+            return;
+          }
+          // Yön değiştir (basit)
+          if(this.x > obs.x && this.x < obs.x + obs.width){
+            this.dir = (this.dir === 1) ? 3 : 1;
+          } else {
+            this.dir = (this.dir === 0) ? 2 : 0;
+          }
+        }
+      }
+    }
+
+    checkTankCollision(){
+      for(let t of tanks){
+        if(t.dead) continue;
+        if(rectsOverlap(this.x - this.size/2, this.y - this.size/2, this.size, this.size,
+          t.x - t.width/2, t.y - t.height/2, t.width, t.height)){
+          if(this.color !== t.color){
+            t.takeDamage();
+            this.dead = true;
+            if(t.isPlayer){
+              if(t.dead){
+                endGame(false);
+              }
+            } else {
+              let aliveAIs = tanks.filter(tk => !tk.isPlayer && !tk.dead).length;
+              if(aliveAIs === 0){
+                endGame(true);
+              } else {
+                setMessage(`Bir düşman vuruldu! Kalan düşman: ${aliveAIs}`);
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  class Obstacle {
+    constructor(x, y, w, h){
+      this.x = x;
+      this.y = y;
+      this.width = w;
+      this.height = h;
+    }
+    draw(){
+      ctx.fillStyle = '#666';
+      ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+  }
+
+  class HealthCube {
+    constructor(x,y){
+      this.x = x;
+      this.y = y;
+      this.size = 24;
+      this.collected = false;
+    }
+
+    draw(){
+      if(this.collected) return;
+      ctx.fillStyle = '#4CAF50';
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y, this.size/2, this.size/2, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y - this.size/4);
+      ctx.lineTo(this.x, this.y + this.size/4);
+      ctx.moveTo(this.x - this.size/4, this.y);
+      ctx.lineTo(this.x + this.size/4, this.y);
+      ctx.stroke();
+    }
+
+    update(){
+      if(this.collected) return;
+      for(let t of tanks){
+        if(t.dead) continue;
+        if(rectsOverlap(t.x - t.width/2, t.y - t.height/2, t.width, t.height,
+          this.x - this.size/2, this.y - this.size/2, this.size, this.size)){
+          this.collected = true;
+          t.health = Math.min(t.health + 1, MAX_HEALTH);
+          if(t.isPlayer){
+            setMessage('Sağlık küpü toplandı! +1 Can');
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  class AI {
+    constructor(tank){
+      this.tank = tank;
+      this.moveDir = 0;
+      this.moveTime = 0;
+      this.reloadCooldown = 0;
+
+      this.setDifficultyParams();
+    }
+
+    setDifficultyParams(){
+      difficulty = difficultySelect.value;
+      this.speedFactor = difficulty === 'easy' ? 0.8 : difficulty === 'medium' ? 1.2 : 1.7;
+      this.accuracy = difficulty === 'easy' ? 0.3 : difficulty === 'medium' ? 0.6 : 0.9;
+      this.reloadTimeMax = difficulty === 'easy' ? 60 : difficulty === 'medium' ? 40 : 20;
+    }
+
+    update(){
+      if(this.tank.dead) return;
+
+      if(this.moveTime <= 0){
+        this.moveDir = Math.floor(Math.random()*4);
+        this.moveTime = 30 + Math.random()*60;
+      }
+      this.moveTime--;
+
+      // Hareket
+      switch(this.moveDir){
+        case 0: this.tank.x += this.tank.speed * this.speedFactor; this.tank.dir = 0; break;
+        case 1: this.tank.y += this.tank.speed * this.speedFactor; this.tank.dir = 1; break;
+        case 2: this.tank.x -= this.tank.speed * this.speedFactor; this.tank.dir = 2; break;
+        case 3: this.tank.y -= this.tank.speed * this.speedFactor; this.tank.dir = 3; break;
+      }
+      this.tank.constrain();
+
+      // Yakındaki tanklardan uzaklaş
+      for(let other of tanks){
+        if(other === this.tank || other.dead) continue;
+        let dx = this.tank.x - other.x;
+        let dy = this.tank.y - other.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        if(dist < 50){
+          if(dx > 0) this.tank.x += this.tank.speed;
+          else this.tank.x -= this.tank.speed;
+          if(dy > 0) this.tank.y += this.tank.speed;
+          else this.tank.y -= this.tank.speed;
+        }
+      }
+
+      // Reload timer
+      if(this.reloadCooldown > 0) this.reloadCooldown--;
+
+      // Ateş etme
+      if(this.reloadCooldown === 0){
+        if(Math.random() < this.accuracy){
+          this.tank.shoot();
+          this.reloadCooldown = this.reloadTimeMax;
+        }
+      }
+    }
+  }
+
+  function rectsOverlap(x1,y1,w1,h1,x2,y2,w2,h2){
+    return !(x2 > x1+w1 || x2+w2 < x1 || y2 > y1+h1 || y2+h2 < y1);
+  }
+
+  function setMessage(msg){
+    message.textContent = msg;
+    setTimeout(() => {
+      if(message.textContent === msg) message.textContent = '';
+    }, 3000);
+  }
+
+  function createObstacles(){
+    obstacles = [];
+    let tries = 0;
+    while(obstacles.length < OBSTACLE_COUNT && tries < 1000){
+      let w = 50 + Math.random()*50;
+      let h = 50 + Math.random()*50;
+      let x = Math.random()*(WIDTH - w);
+      let y = Math.random()*(HEIGHT - h);
+
+      let overlap = obstacles.some(obs => rectsOverlap(x,y,w,h, obs.x, obs.y, obs.width, obs.height));
+      let tooCloseToPlayer = Math.abs(x - WIDTH/2) < 120 && Math.abs(y - HEIGHT/2) < 120;
+      if(!overlap && !tooCloseToPlayer){
+        obstacles.push(new Obstacle(x,y,w,h));
+      }
+      tries++;
+    }
+  }
+
+  function createHealthCubes(){
+    healthCubes = [];
+    for(let i=0; i<5; i++){
+      let x, y;
+      let valid = false;
+      while(!valid){
+        x = Math.random()*(WIDTH - 30) + 15;
+        y = Math.random()*(HEIGHT - 30) + 15;
+        valid = !obstacles.some(o => rectsOverlap(x-12,y-12,24,24, o.x, o.y, o.width, o.height));
+        if(valid){
+          for(let hc of healthCubes){
+            if(Math.abs(hc.x - x) < 50 && Math.abs(hc.y - y) < 50){
+              valid = false;
+              break;
+            }
+          }
+        }
+      }
+      healthCubes.push(new HealthCube(x,y));
+    }
+  }
+
+  function startGame(){
+    difficulty = difficultySelect.value;
+    playerTankModel = Number(tankModelSelect.value);
+
+    tanks = [];
+    bullets = [];
+    obstacles = [];
+    ais = [];
+
+    createObstacles();
+    createHealthCubes();
+
+    // Oyuncu tankı ortada
+    playerTank = new Tank(WIDTH/2, HEIGHT/2, PLAYER_COLOR, true, playerTankModel);
+    tanks.push(playerTank);
+
+    // AI tankları
+    for(let i=0; i<4; i++){
+      let tx, ty;
+      do {
+        tx = Math.random()*(WIDTH - TANK_SIZE*2) + TANK_SIZE;
+        ty = Math.random()*(HEIGHT - TANK_SIZE*2) + TANK_SIZE;
+      } while(Math.abs(tx - WIDTH/2) < 150 && Math.abs(ty - HEIGHT/2) < 150);
+
+      let aiTank = new Tank(tx, ty, AI_COLORS[i], false, 1 + Math.floor(Math.random()*3));
+      tanks.push(aiTank);
+      ais.push(new AI(aiTank));
+    }
+
+    gameRunning = true;
+    ui.style.display = 'none';
+    startBtn.style.display = 'none';
+    gameOverUI.style.display = 'none';
+    canvas.style.display = 'block';
+    setMessage('Oyun başladı! Hareket: W,A,S,D | Ateş: O tuşu');
+
+    gameLoop();
+  }
+
+  function endGame(playerWon){
+    gameRunning = false;
+    gameOverMsg.textContent = playerWon ? 'Tebrikler! Tüm düşmanlar yok edildi!' : 'Kaybettiniz! Tankınız vuruldu.';
+    gameOverUI.style.display = 'flex';
+    canvas.style.display = 'none';
+    setMessage('');
+  }
+
+  function gameLoop(){
+    if(!gameRunning) return;
+
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    for(let obs of obstacles){
+      obs.draw();
+    }
+
+    for(let hc of healthCubes){
+      hc.update();
+      hc.draw();
+    }
+
+    for(let t of tanks){
+      t.update();
+      t.draw();
+    }
+
+    for(let ai of ais){
+      ai.update();
+    }
+
+    for(let b of bullets){
+      b.update();
+      b.draw();
+    }
+
+    bullets = bullets.filter(b => !b.dead);
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if(e.key.toLowerCase() === 'o' && playerTank){
+      playerTank.shoot();
+    }
+  });
+
+  window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  startBtn.addEventListener('click', () => {
+    startGame();
+  });
+
+  restartBtn.addEventListener('click', () => {
+    startGame();
+  });
+
+  menuBtn.addEventListener('click', () => {
+    gameOverUI.style.display = 'none';
+    ui.style.display = 'flex';
+    startBtn.style.display = 'inline-block';
+    message.textContent = '';
+  });
+
+})();
+</script>
+
+</body>
+</html>
